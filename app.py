@@ -37,7 +37,7 @@ ORDER_DB_PATH = os.path.join(os.path.dirname(__file__), 'orders.json')
 # --- Email Configuration ---
 # Lấy từ Environment Variables trên Render
 MAIL_SERVER = "smtp.gmail.com"
-MAIL_PORT = 465
+MAIL_PORT = 587
 MAIL_SENDER = os.environ.get("MAIL_SENDER")
 MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
 
@@ -87,11 +87,19 @@ def send_reset_email(to_email, reset_link):
     
     context = ssl.create_default_context()
     try:
-        logger.info(f"  [1/3] Dang ket noi den {MAIL_SERVER}:{MAIL_PORT}...")
-        with smtplib.SMTP_SSL(MAIL_SERVER, MAIL_PORT, context=context, timeout=15) as server:
-            logger.info("  [2/3] Dang dang nhap...")
+        logger.info(f"  [1/4] Dang ket noi den {MAIL_SERVER}:{MAIL_PORT} (IPv4 Forced)...")
+        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT, timeout=20) as server:
+            server.set_debuglevel(1) # In chi tiet qua trinh "noi chuyen" ra Log
+            server.ehlo()
+            if server.has_extn("STARTTLS"):
+                logger.info("  [2/4] Dang bat dau STARTTLS...")
+                server.starttls(context=context)
+                server.ehlo()
+            
+            logger.info("  [3/4] Dang dang nhap...")
             server.login(MAIL_SENDER, MAIL_PASSWORD)
-            logger.info("  [3/3] Dang gui mail...")
+            
+            logger.info("  [4/4] Dang gui mail...")
             server.sendmail(MAIL_SENDER, to_email, message.as_string())
         logger.info(f"=== GUI EMAIL THANH CONG ===")
         return True
