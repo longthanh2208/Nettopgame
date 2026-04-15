@@ -11,14 +11,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import time
 import secrets
-import socket
+# Bo patch IPv4 de he thong tu dieu tiet mang
 
-# Ep dung IPv4 de tranh loi mang tren Render
-orig_getaddrinfo = socket.getaddrinfo
-def patched_getaddrinfo(*args, **kwargs):
-    res = orig_getaddrinfo(*args, **kwargs)
-    return [r for r in res if r[0] == socket.AF_INET]
-socket.getaddrinfo = patched_getaddrinfo
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -79,47 +73,22 @@ def send_reset_email(to_email, reset_link):
     message["Subject"] = subject
     message.attach(MIMEText(body, "plain", "utf-8"))
     
-    logger.info(f"=== BẮT ĐẦU GỬI EMAIL ===")
-    logger.info(f"  Đến: {to_email}")
-    logger.info(f"  Từ: {MAIL_SENDER}")
-    logger.info(f"  Server: {MAIL_SERVER}:{MAIL_PORT}")
-    logger.info(f"  Password (4 ký tự đầu): {MAIL_PASSWORD[:4]}...")
+    logger.info(f"=== BAT DAU GUI EMAIL ===")
+    logger.info(f"  Den: {to_email} | Tu: {MAIL_SENDER} | Port: 465")
     
     context = ssl.create_default_context()
     try:
-        logger.info(f"  [1/4] Dang ket noi den {MAIL_SERVER}:{MAIL_PORT} (IPv4 Forced)...")
-        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT, timeout=20) as server:
-            server.set_debuglevel(1) # In chi tiet qua trinh "noi chuyen" ra Log
-            server.ehlo()
-            if server.has_extn("STARTTLS"):
-                logger.info("  [2/4] Dang bat dau STARTTLS...")
-                server.starttls(context=context)
-                server.ehlo()
-            
-            logger.info("  [3/4] Dang dang nhap...")
+        logger.info(f"  [1/3] Dang ket noi SMTP_SSL (Timeout 60s)...")
+        with smtplib.SMTP_SSL(MAIL_SERVER, 465, context=context, timeout=60) as server:
+            logger.info("  [2/3] Dang dang nhap...")
             server.login(MAIL_SENDER, MAIL_PASSWORD)
-            
-            logger.info("  [4/4] Dang gui mail...")
+            logger.info("  [3/3] Dang gui thu...")
             server.sendmail(MAIL_SENDER, to_email, message.as_string())
         logger.info(f"=== GUI EMAIL THANH CONG ===")
         return True
-        return True
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"=== LỖI XÁC THỰC GMAIL ===")
-        logger.error(f"  Gmail từ chối đăng nhập. Mã lỗi: {e.smtp_code}")
-        logger.error(f"  Chi tiết: {e.smtp_error}")
-        logger.error(f"  GIẢI PHÁP: Tạo App Password mới tại https://myaccount.google.com/apppasswords")
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"=== LỖI SMTP ===")
-        logger.error(f"  Loại lỗi: {type(e).__name__}")
-        logger.error(f"  Chi tiết: {e}")
-        return False
     except Exception as e:
-        logger.error(f"=== LỖI KHÔNG XÁC ĐỊNH ===")
-        logger.error(f"  Loại lỗi: {type(e).__name__}")
-        logger.error(f"  Chi tiết: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"=== LOI GUI MAIL: {type(e).__name__} ===")
+        logger.error(f"  Chi tiet: {e}")
         return False
 
 # --- Routes ---
