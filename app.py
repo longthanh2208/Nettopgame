@@ -27,13 +27,22 @@ PRODUCT_DB_PATH = os.path.join(os.path.dirname(__file__), 'products.json')
 ORDER_DB_PATH = os.path.join(os.path.dirname(__file__), 'orders.json')
 
 # --- Email Configuration ---
-# Ưu tiên lấy từ Environment Variables (trên Render), fallback về hardcode để test local
+# Lấy từ Environment Variables trên Render
 MAIL_SERVER = "smtp.gmail.com"
 MAIL_PORT = 465
 MAIL_SENDER = os.environ.get("MAIL_SENDER")
 MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
-if not MAIL_SENDER or not MAIL_PASSWORD:
-    logger.warning("⚠️  MAIL_SENDER hoặc MAIL_PASSWORD chưa được cấu hình! Chức năng gửi email sẽ không hoạt động.")
+
+# Debug: In ra để kiểm tra Render đã nhận biến chưa (KHÔNG HIỆN PASS)
+if MAIL_SENDER:
+    logger.info(f"✅ Đã nhận MAIL_SENDER: {MAIL_SENDER}")
+else:
+    logger.error("❌ CHƯA CÓ MAIL_SENDER! Anh hãy kiểm tra Environment Variables trên Render.")
+
+if MAIL_PASSWORD:
+    logger.info(f"✅ Đã nhận MAIL_PASSWORD (độ dài: {len(MAIL_PASSWORD)})")
+else:
+    logger.error("❌ CHƯA CÓ MAIL_PASSWORD! Anh hãy kiểm tra Environment Variables trên Render.")
 
 # --- Helper Functions ---
 def load_data(path, default=[]):
