@@ -11,6 +11,14 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import time
 import secrets
+import socket
+
+# Ep dung IPv4 de tranh loi mang tren Render
+orig_getaddrinfo = socket.getaddrinfo
+def patched_getaddrinfo(*args, **kwargs):
+    res = orig_getaddrinfo(*args, **kwargs)
+    return [r for r in res if r[0] == socket.AF_INET]
+socket.getaddrinfo = patched_getaddrinfo
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -33,16 +41,16 @@ MAIL_PORT = 465
 MAIL_SENDER = os.environ.get("MAIL_SENDER")
 MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
 
-# Debug: In ra để kiểm tra Render đã nhận biến chưa (KHÔNG HIỆN PASS)
+# Debug: Kiem tra bien moi truong
 if MAIL_SENDER:
-    logger.info(f"✅ Đã nhận MAIL_SENDER: {MAIL_SENDER}")
+    logger.info(f"MAIL_SENDER found: {MAIL_SENDER}")
 else:
-    logger.error("❌ CHƯA CÓ MAIL_SENDER! Anh hãy kiểm tra Environment Variables trên Render.")
+    logger.error("MAIL_SENDER is MISSING! Check Render Dashboard.")
 
 if MAIL_PASSWORD:
-    logger.info(f"✅ Đã nhận MAIL_PASSWORD (độ dài: {len(MAIL_PASSWORD)})")
+    logger.info("MAIL_PASSWORD found.")
 else:
-    logger.error("❌ CHƯA CÓ MAIL_PASSWORD! Anh hãy kiểm tra Environment Variables trên Render.")
+    logger.error("MAIL_PASSWORD is MISSING! Check Render Dashboard.")
 
 # --- Helper Functions ---
 def load_data(path, default=[]):
@@ -79,14 +87,14 @@ def send_reset_email(to_email, reset_link):
     
     context = ssl.create_default_context()
     try:
-        # Sử dụng SMTP_SSL trực tiếp với cổng 465
-        with smtplib.SMTP_SSL(MAIL_SERVER, MAIL_PORT, context=context, timeout=30) as server:
-            logger.info("  [1/3] Đang kết nối và đăng nhập...")
+        logger.info(f"  [1/3] Dang ket noi den {MAIL_SERVER}:{MAIL_PORT}...")
+        with smtplib.SMTP_SSL(MAIL_SERVER, MAIL_PORT, context=context, timeout=15) as server:
+            logger.info("  [2/3] Dang dang nhap...")
             server.login(MAIL_SENDER, MAIL_PASSWORD)
-            logger.info("  [2/3] Đang gửi email...")
+            logger.info("  [3/3] Dang gui mail...")
             server.sendmail(MAIL_SENDER, to_email, message.as_string())
-            logger.info("  [3/3] Hoàn tất.")
-        logger.info(f"=== GỬI EMAIL THÀNH CÔNG đến {to_email} ===")
+        logger.info(f"=== GUI EMAIL THANH CONG ===")
+        return True
         return True
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"=== LỖI XÁC THỰC GMAIL ===")
