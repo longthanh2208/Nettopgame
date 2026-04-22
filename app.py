@@ -11,8 +11,13 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import time
 import secrets
-# Bo patch IPv4 de he thong tu dieu tiet mang
-
+# --- Force IPv4 for Render (Fix smtplib connection issues) ---
+import socket
+orig_getaddrinfo = socket.getaddrinfo
+def patched_getaddrinfo(*args, **kwargs):
+    res = orig_getaddrinfo(*args, **kwargs)
+    return [r for r in res if r[0] == socket.AF_INET]
+socket.getaddrinfo = patched_getaddrinfo
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -65,30 +70,65 @@ def allowed_file(filename):
 
 def send_reset_email(to_email, reset_link):
     subject = "Khôi phục mật khẩu - NETTOPGAME"
-    body = f"Chào bạn,\n\nNhấn vào link sau để đặt lại mật khẩu:\n{reset_link}\n\nLink này chỉ dùng được 1 lần.\n\nTrân trọng,\nNETTOPGAME"
     
-    message = MIMEMultipart()
+    # Nội dung Text (dự phòng)
+    text_body = f"Chào bạn,\n\nNhấn vào link sau để đặt lại mật khẩu:\n{reset_link}\n\nLink này chỉ dùng được 1 lần và có hiệu lực trong 15 phút.\n\nTrân trọng,\nNETTOPGAME"
+    
+    # Nội dung HTML (giao diện đẹp)
+    html_body = f"""
+    <html>
+    <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f4f7f9; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: #2563eb; margin: 0;">NETTOPGAME</h1>
+                <p style="color: #64748b; font-size: 0.9rem;">Hệ thống nạp game uy tín</p>
+            </div>
+            <div style="border-top: 4px solid #2563eb; padding-top: 20px;">
+                <h2 style="color: #1e293b; font-size: 1.5rem; margin-top: 0;">Khôi phục mật khẩu</h2>
+                <p>Chào bạn,</p>
+                <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản gắn với email này. Nếu bạn không thực hiện yêu cầu này, hãy bỏ qua email.</p>
+                <div style="text-align: center; margin: 35px 0;">
+                    <a href="{reset_link}" style="background-color: #2563eb; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);">ĐẶT LẠI MẬT KHẨU</a>
+                </div>
+                <p style="font-size: 0.9rem; color: #64748b;">Hoặc nhấn vào link dưới đây:</p>
+                <p style="word-break: break-all; font-size: 0.85rem;"><a href="{reset_link}" style="color: #2563eb;">{reset_link}</a></p>
+                <p style="font-size: 0.85rem; color: #94a3b8; background: #f8fafc; padding: 10px; border-radius: 6px;">Lưu ý: Link này chỉ có hiệu lực trong <strong>15 phút</strong> và chỉ sử dụng được 1 lần duy nhất.</p>
+            </div>
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 0.8rem;">
+                <p>© 2024 NETTOPGAME. All rights reserved.</p>
+                <p>Đây là email tự động, vui lòng không phản hồi.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    message = MIMEMultipart("alternative")
     message["From"] = MAIL_SENDER
     message["To"] = to_email
     message["Subject"] = subject
-    message.attach(MIMEText(body, "plain", "utf-8"))
     
-    logger.info(f"=== BAT DAU GUI EMAIL ===")
-    logger.info(f"  Den: {to_email} | Tu: {MAIL_SENDER} | Port: 465")
+    message.attach(MIMEText(text_body, "plain", "utf-8"))
+    message.attach(MIMEText(html_body, "html", "utf-8"))
     
-    context = ssl.create_default_context()
+    logger.info(f"=== BẮT ĐẦU GỬI EMAIL ===")
+    logger.info(f"  Đến: {to_email} | Từ: {MAIL_SENDER} | Server: {MAIL_SERVER}:{MAIL_PORT}")
+    
     try:
-        logger.info(f"  [1/3] Dang ket noi SMTP_SSL (Timeout 60s)...")
-        with smtplib.SMTP_SSL(MAIL_SERVER, 465, context=context, timeout=60) as server:
-            logger.info("  [2/3] Dang dang nhap...")
+        context = ssl.create_default_context()
+        logger.info(f"  [1/3] Đang kết nối SMTP (Port {MAIL_PORT})...")
+        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT, timeout=30) as server:
+            server.starttls(context=context)
+            logger.info("  [2/3] Đang đăng nhập...")
             server.login(MAIL_SENDER, MAIL_PASSWORD)
-            logger.info("  [3/3] Dang gui thu...")
+            logger.info("  [3/3] Đang gửi thư...")
             server.sendmail(MAIL_SENDER, to_email, message.as_string())
-        logger.info(f"=== GUI EMAIL THANH CONG ===")
+        
+        logger.info(f"=== GỬI EMAIL THÀNH CÔNG ===")
         return True
     except Exception as e:
-        logger.error(f"=== LOI GUI MAIL: {type(e).__name__} ===")
-        logger.error(f"  Chi tiet: {e}")
+        logger.error(f"=== LỖI GỬI MAIL: {type(e).__name__} ===")
+        logger.error(f"  Chi tiết: {e}")
         return False
 
 # --- Routes ---
