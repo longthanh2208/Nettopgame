@@ -382,6 +382,12 @@ function initChat() {
     if (!chatToggle) return;
 
     chatToggle.addEventListener('click', () => {
+        if (!currentUser) {
+            showToast("Vui lòng đăng nhập để sử dụng tính năng chat!", "error");
+            authModal.style.display = 'flex';
+            showAuthForm('login');
+            return;
+        }
         const isVisible = chatWindow.style.display === 'flex';
         chatWindow.style.display = isVisible ? 'none' : 'flex';
         if (!isVisible) {
@@ -580,6 +586,18 @@ function initAdminHandlers() {
     if (productForm) productForm.addEventListener('submit', handleProductSubmit);
     const cancelBtn = document.getElementById('p-cancel-btn');
     if (cancelBtn) cancelBtn.addEventListener('click', resetProductForm);
+
+    const adminSearchInput = document.getElementById('admin-product-search');
+    if (adminSearchInput) {
+        adminSearchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            const filtered = products.filter(p =>
+                p.name.toLowerCase().includes(query) ||
+                p.category.toLowerCase().includes(query)
+            );
+            renderAdminProducts(filtered);
+        });
+    }
 }
 
 async function switchAdminTab(tab) {
@@ -597,7 +615,11 @@ async function switchAdminTab(tab) {
         btn.classList.toggle('active', id === tab);
     });
 
-    if (tab === 'products') fetchAdminProducts();
+    if (tab === 'products') {
+        const adminSearchInput = document.getElementById('admin-product-search');
+        if (adminSearchInput) adminSearchInput.value = '';
+        fetchAdminProducts();
+    }
     if (tab === 'orders') fetchOrders();
     if (tab === 'messages') fetchAdminMessages();
 }
@@ -956,7 +978,8 @@ function renderProducts(items) {
 
 // --- Cart Logic ---
 window.addToCart = (productId) => {
-    if (!currentUser) {
+    console.log("addToCart clicked for product:", productId, "User:", currentUser);
+    if (!currentUser || !currentUser.email) {
         showToast("Vui lòng đăng nhập để thêm vào giỏ hàng!", "error");
         authModal.style.display = 'flex';
         showAuthForm('login');
@@ -1060,6 +1083,12 @@ function showToast(message, type = 'success') {
 }
 
 async function handleCheckout() {
+    if (!currentUser) {
+        showToast("Vui lòng đăng nhập để thanh toán!", "error");
+        authModal.style.display = 'flex';
+        showAuthForm('login');
+        return;
+    }
     if (cart.length === 0) return alert("Giỏ hàng đang trống!");
     if (!selectedPaymentMethod) return alert("Vui lòng chọn phương thức thanh toán!");
 
