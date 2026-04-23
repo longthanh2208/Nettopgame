@@ -382,6 +382,12 @@ function initChat() {
     if (!chatToggle) return;
 
     chatToggle.addEventListener('click', () => {
+        if (!currentUser) {
+            showToast("Vui lòng đăng nhập để sử dụng tính năng chat!", "error");
+            authModal.style.display = 'flex';
+            showAuthForm('login');
+            return;
+        }
         const isVisible = chatWindow.style.display === 'flex';
         chatWindow.style.display = isVisible ? 'none' : 'flex';
         if (!isVisible) {
@@ -956,6 +962,13 @@ function renderProducts(items) {
 
 // --- Cart Logic ---
 window.addToCart = (productId) => {
+    console.log("addToCart clicked for product:", productId, "User:", currentUser);
+    if (!currentUser || !currentUser.email) {
+        showToast("Vui lòng đăng nhập để thêm vào giỏ hàng!", "error");
+        authModal.style.display = 'flex';
+        showAuthForm('login');
+        return;
+    }
     const product = products.find(p => p.id === productId);
     const existingItem = cart.find(item => item.id === productId);
     if (existingItem) existingItem.quantity += 1;
@@ -1054,6 +1067,12 @@ function showToast(message, type = 'success') {
 }
 
 async function handleCheckout() {
+    if (!currentUser) {
+        showToast("Vui lòng đăng nhập để thanh toán!", "error");
+        authModal.style.display = 'flex';
+        showAuthForm('login');
+        return;
+    }
     if (cart.length === 0) return alert("Giỏ hàng đang trống!");
     if (!selectedPaymentMethod) return alert("Vui lòng chọn phương thức thanh toán!");
 
