@@ -586,6 +586,18 @@ function initAdminHandlers() {
     if (productForm) productForm.addEventListener('submit', handleProductSubmit);
     const cancelBtn = document.getElementById('p-cancel-btn');
     if (cancelBtn) cancelBtn.addEventListener('click', resetProductForm);
+
+    const adminSearchInput = document.getElementById('admin-product-search');
+    if (adminSearchInput) {
+        adminSearchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            const filtered = products.filter(p =>
+                p.name.toLowerCase().includes(query) ||
+                p.category.toLowerCase().includes(query)
+            );
+            renderAdminProducts(filtered);
+        });
+    }
 }
 
 async function switchAdminTab(tab) {
@@ -603,7 +615,11 @@ async function switchAdminTab(tab) {
         btn.classList.toggle('active', id === tab);
     });
 
-    if (tab === 'products') fetchAdminProducts();
+    if (tab === 'products') {
+        const adminSearchInput = document.getElementById('admin-product-search');
+        if (adminSearchInput) adminSearchInput.value = '';
+        fetchAdminProducts();
+    }
     if (tab === 'orders') fetchOrders();
     if (tab === 'messages') fetchAdminMessages();
 }
