@@ -212,7 +212,8 @@ def add_product():
         "name": request.form.get('name'),
         "price": int(request.form.get('price')),
         "category": request.form.get('category'),
-        "image": f"images/{filename}"
+        "image": f"images/{filename}",
+        "sold": 0
     }
     products.insert(0, new_product)
     save_data(PRODUCT_DB_PATH, products)
@@ -265,6 +266,15 @@ def manage_orders():
         }
         orders.insert(0, new_order)
         save_data(ORDER_DB_PATH, orders)
+        
+        # Increment sold count
+        products = load_data(PRODUCT_DB_PATH)
+        for item in data.get("items", []):
+            for p in products:
+                if p['id'] == item['id']:
+                    p['sold'] = p.get('sold', 0) + item.get('quantity', 1)
+        save_data(PRODUCT_DB_PATH, products)
+
         return jsonify({"status": "success", "message": "Đặt hàng thành công!", "order_id": new_order["id"]})
     return jsonify(orders)
 
