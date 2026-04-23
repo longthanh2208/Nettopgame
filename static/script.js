@@ -114,6 +114,19 @@ const forgotContainer = document.getElementById('forgot-form-container');
 const resetContainer = document.getElementById('reset-form-container');
 const profileContainer = document.getElementById('profile-container');
 
+// Chat & Review Selectors
+const chatToggle = document.getElementById('chat-toggle');
+const chatWindow = document.getElementById('chat-window');
+const closeChat = document.getElementById('close-chat');
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const sendMsgBtn = document.getElementById('send-msg-btn');
+const reviewModal = document.getElementById('review-modal');
+const closeReview = document.getElementById('close-review');
+const submitReviewBtn = document.getElementById('submit-review-btn');
+const productDetailModal = document.getElementById('product-detail-modal');
+const closeDetail = document.getElementById('close-detail');
+
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
@@ -125,7 +138,9 @@ document.addEventListener('DOMContentLoaded', () => {
     updateAuthUI();
     checkForReset();
     initAdminHandlers();
-    
+    initChat();
+    initReviewHandlers();
+
     const checkoutBtn = document.querySelector('#cart-section .btn-primary');
     if (checkoutBtn) checkoutBtn.addEventListener('click', handleCheckout);
 
@@ -306,7 +321,6 @@ async function handleReset() {
         const data = await res.json();
         if (data.status === 'success') {
             alert(data.message);
-            // Clear URL
             window.history.replaceState({}, document.title, "/");
             showAuthForm('login');
         } else {
@@ -320,13 +334,12 @@ function handleLogout() {
     localStorage.removeItem('user');
     updateAuthUI();
     authModal.style.display = 'none';
-    
-    // Clear all inputs
+
     const authInputs = document.querySelectorAll('#auth-modal input');
     authInputs.forEach(input => {
         input.value = '';
         if (input.type === 'text' && (input.id.includes('password') || input.id.includes('pass'))) {
-             input.type = 'password'; // Reset toggle state
+            input.type = 'password';
         }
     });
 
@@ -362,42 +375,280 @@ function updateAuthUI() {
     }
 }
 
+// --- Chat Logic ---
+let chatInterval = null;
+
+function initChat() {
+    if (!chatToggle) return;
+
+    chatToggle.addEventListener('click', () => {
+        const isVisible = chatWindow.style.display === 'flex';
+        chatWindow.style.display = isVisible ? 'none' : 'flex';
+        if (!isVisible) {
+            fetchMessages();
+            if (!chatInterval) chatInterval = setInterval(fetchMessages, 3000);
+        } else {
+            clearInterval(chatInterval);
+            chatInterval = null;
+        }
+    });
+
+    closeChat.addEventListener('click', () => {
+        chatWindow.style.display = 'none';
+        clearInterval(chatInterval);
+        chatInterval = null;
+    });
+
+    sendMsgBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+}
+
+async function fetchMessages() {
+    if (!currentUser) {
+        chatMessages.innerHTML = '<div class="message admin">Vui lòng đăng nhập để chat với chúng tôi.</div>';
+        return;
+    }
+    try {
+        const res = await fetch(`/api/messages?email=${encodeURIComponent(currentUser.email)}`);
+        const messages = await res.json();
+        renderMessages(messages);
+    } catch (err) { console.error("Lỗi tải tin nhắn"); }
+}
+
+function renderMessages(messages) {
+    const html = messages.map(m => {
+        const timeStr = m.time && m.time.includes(' ') ? m.time.split(' ')[1] : '';
+        return `
+            <div class="message ${m.sender_role === 'admin' ? 'admin' : 'user'}">
+                ${m.content}
+                <div style="font-size: 0.6rem; opacity: 0.6; margin-top: 0.25rem;">${timeStr}</div>
+            </div>
+        `;
+    }).join('');
+
+    const welcome = '<div class="message admin">Xin chào! Chúng tôi có thể giúp gì cho bạn?</div>';
+    chatMessages.innerHTML = welcome + html;
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function sendMessage() {
+    const content = chatInput.value.trim();
+    if (!content || !currentUser) return;
+
+    chatInput.value = '';
+    try {
+        await fetch('/api/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_email: currentUser.email,
+                content: content,
+                sender_role: 'user'
+            })
+        });
+        fetchMessages();
+    } catch (err) { showToast("Không gửi được tin nhắn", "error"); }
+}
+
+// --- Review Logic ---
+let currentReviewOrderId = null;
+let currentReviewProductId = null;
+
+function initReviewHandlers() {
+    if (closeReview) closeReview.addEventListener('click', () => reviewModal.style.display = 'none');
+    if (submitReviewBtn) submitReviewBtn.addEventListener('click', submitReview);
+    if (closeDetail) closeDetail.addEventListener('click', () => productDetailModal.style.display = 'none');
+
+    window.addEventListener('click', (e) => {
+        if (e.target === reviewModal) reviewModal.style.display = 'none';
+        if (e.target === productDetailModal) productDetailModal.style.display = 'none';
+    });
+}
+
+window.openReviewModal = (orderId, productId, productName, productImage) => {
+    currentReviewOrderId = orderId;
+    currentReviewProductId = productId;
+
+    document.getElementById('review-product-info').innerHTML = `
+        <img src="static/${productImage}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px;">
+        <div>
+            <div style="font-weight: 700;">${productName}</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">Đơn hàng #${orderId}</div>
+        </div>
+    `;
+
+    document.querySelectorAll('input[name="rating"]').forEach(r => r.checked = false);
+    document.getElementById('review-comment').value = '';
+    reviewModal.style.display = 'flex';
+};
+
+async function submitReview() {
+    const rating = document.querySelector('input[name="rating"]:checked')?.value;
+    const comment = document.getElementById('review-comment').value.trim();
+
+    if (!rating) return alert("Vui lòng chọn số sao đánh giá!");
+    if (!comment) return alert("Vui lòng nhập nhận xét của bạn!");
+
+    try {
+        const res = await fetch('/api/reviews', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                order_id: currentReviewOrderId,
+                product_id: currentReviewProductId,
+                user_email: currentUser.email,
+                user_name: currentUser.name,
+                rating: parseInt(rating),
+                comment: comment
+            })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast("Cảm ơn bạn đã đánh giá!");
+            reviewModal.style.display = 'none';
+            fetchMyOrders();
+        } else {
+            alert(data.message);
+        }
+    } catch (err) { alert("Lỗi khi gửi đánh giá!"); }
+}
+
+window.showProductDetail = async (productId) => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    try {
+        const res = await fetch(`/api/reviews/${productId}`);
+        const reviews = await res.json();
+
+        const avgRating = reviews.length > 0
+            ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(1)
+            : "0.0";
+
+        const reviewsHtml = reviews.length > 0 ? reviews.map(r => `
+            <div class="review-card">
+                <div class="review-avatar">${r.user_name.charAt(0).toUpperCase()}</div>
+                <div class="review-content">
+                    <div class="review-header">
+                        <span class="review-name">${r.user_name}</span>
+                        <span class="review-date">${r.time.split(' ')[0]}</span>
+                    </div>
+                    <div class="star-rating" style="margin-bottom: 0.5rem;">
+                        ${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}
+                    </div>
+                    <p style="font-size: 0.9rem; line-height: 1.5;">${r.comment}</p>
+                </div>
+            </div>
+        `).join('') : '<p style="text-align: center; padding: 2rem; color: var(--text-muted);">Chưa có đánh giá nào cho sản phẩm này.</p>';
+
+        document.getElementById('product-detail-body').innerHTML = `
+            <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 2rem; margin-bottom: 2rem;">
+                <img src="static/${product.image}" style="width: 100%; border-radius: var(--radius-lg); box-shadow: var(--shadow-md);">
+                <div>
+                    <span class="product-category">${product.category}</span>
+                    <h2 style="font-size: 1.75rem; margin: 0.5rem 0;">${product.name}</h2>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                        <div class="star-rating">${'★'.repeat(Math.round(avgRating))}${'☆'.repeat(5 - Math.round(avgRating))}</div>
+                        <span style="font-weight: 600;">${avgRating}</span>
+                        <span style="color: var(--text-muted); font-size: 0.85rem;">(${reviews.length} đánh giá)</span>
+                    </div>
+                    <p class="product-price" style="font-size: 1.5rem; margin-bottom: 1.5rem;">${formatPrice(product.price)}</p>
+                    <button class="btn-primary" style="width: 100%; padding: 1rem;" onclick="addToCart(${product.id}); document.getElementById('product-detail-modal').style.display='none';">Thêm vào giỏ hàng</button>
+                    <p style="margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;">Sản phẩm chính hãng 100%. Bảo hành 12 tháng tại các trung tâm bảo hành ủy quyền toàn quốc. Giao hàng nhanh chóng trong 24h.</p>
+                </div>
+            </div>
+            <div style="border-top: 1px solid var(--border-color); padding-top: 2rem;">
+                <h3 style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i data-lucide="message-square" size="20"></i> Đánh giá từ khách hàng
+                </h3>
+                ${reviewsHtml}
+            </div>
+        `;
+
+        productDetailModal.style.display = 'flex';
+        lucide.createIcons();
+    } catch (err) { alert("Không thể tải thông tin đánh giá."); }
+};
+
 // --- Admin Dashboard Logic ---
 function initAdminHandlers() {
     if (!adminBtn) return;
-    
     adminBtn.addEventListener('click', () => showSection('admin'));
-    
-    if (productForm) {
-        productForm.addEventListener('submit', handleProductSubmit);
-    }
-    
+    if (productForm) productForm.addEventListener('submit', handleProductSubmit);
     const cancelBtn = document.getElementById('p-cancel-btn');
-    if (cancelBtn) {
-        cancelBtn.addEventListener('click', resetProductForm);
-    }
+    if (cancelBtn) cancelBtn.addEventListener('click', resetProductForm);
 }
 
-function switchAdminTab(tab) {
+async function switchAdminTab(tab) {
     const prodContent = document.getElementById('admin-products-content');
     const orderContent = document.getElementById('admin-orders-content');
-    const prodTabBtn = document.getElementById('tab-products-btn');
-    const orderTabBtn = document.getElementById('tab-orders-btn');
+    const msgContent = document.getElementById('admin-messages-content');
+    const tabs = document.querySelectorAll('.admin-tab');
 
-    if (tab === 'products') {
-        prodContent.style.display = 'block';
-        orderContent.style.display = 'none';
-        prodTabBtn.classList.add('active');
-        orderTabBtn.classList.remove('active');
-        fetchAdminProducts();
-    } else {
-        prodContent.style.display = 'none';
-        orderContent.style.display = 'block';
-        prodTabBtn.classList.remove('active');
-        orderTabBtn.classList.add('active');
-        fetchOrders();
-    }
+    prodContent.style.display = tab === 'products' ? 'block' : 'none';
+    orderContent.style.display = tab === 'orders' ? 'block' : 'none';
+    msgContent.style.display = tab === 'messages' ? 'block' : 'none';
+
+    tabs.forEach(btn => {
+        const id = btn.id.split('-')[1];
+        btn.classList.toggle('active', id === tab);
+    });
+
+    if (tab === 'products') fetchAdminProducts();
+    if (tab === 'orders') fetchOrders();
+    if (tab === 'messages') fetchAdminMessages();
 }
+
+async function fetchAdminMessages() {
+    try {
+        const res = await fetch('/api/messages?admin=true');
+        const data = await res.json();
+        const grouped = {};
+        data.forEach(m => {
+            if (!grouped[m.user_email]) grouped[m.user_email] = [];
+            grouped[m.user_email].push(m);
+        });
+
+        const listEl = document.getElementById('admin-chat-list');
+        if (Object.keys(grouped).length === 0) {
+            listEl.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 2rem;">Chưa có tin nhắn nào.</p>';
+            return;
+        }
+
+        listEl.innerHTML = Object.entries(grouped).map(([email, msgs]) => {
+            const lastMsg = msgs[msgs.length - 1];
+            return `
+                <div style="background: var(--bg-color); padding: 1.25rem; border-radius: var(--radius-md); border: 1px solid var(--border-color); cursor: pointer; margin-bottom: 1rem;" onclick="openAdminReply('${email}')">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span style="font-weight: 700;">${email}</span>
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">${lastMsg.time}</span>
+                    </div>
+                    <div style="font-size: 0.9rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${lastMsg.sender_role === 'admin' ? '<b>Bạn:</b> ' : ''}${lastMsg.content}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) { console.error("Lỗi tải tin nhắn admin"); }
+}
+
+window.openAdminReply = (email) => {
+    const content = prompt(`Trả lời khách hàng ${email}:`);
+    if (!content) return;
+
+    fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_email: email,
+            content: content,
+            sender_role: 'admin'
+        })
+    }).then(() => {
+        showToast("Đã gửi phản hồi");
+        fetchAdminMessages();
+    });
+};
 
 async function fetchAdminProducts() {
     const res = await fetch('/products');
@@ -413,7 +664,6 @@ function renderAdminProducts(items) {
             <td style="padding: 1rem;">
                 <div style="font-weight: 600;">${p.name}</div>
                 <div style="font-size: 0.8rem; color: var(--accent-color);">${p.price.toLocaleString()}đ</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted);">${p.category}</div>
             </td>
             <td style="padding: 1rem;">
                 <button class="action-btn edit-btn" onclick="editProduct(${p.id})"><i data-lucide="edit-2" size="14"></i> Sửa</button>
@@ -431,17 +681,11 @@ async function handleProductSubmit(e) {
     formData.append('name', document.getElementById('p-name').value);
     formData.append('price', document.getElementById('p-price').value);
     formData.append('category', document.getElementById('p-category').value);
-    
     const imageFile = document.getElementById('p-image').files[0];
-    if (imageFile) {
-        formData.append('image', imageFile);
-    } else if (!id) {
-        return alert("Vui lòng chọn ảnh cho sản phẩm mới!");
-    }
+    if (imageFile) formData.append('image', imageFile);
 
     const url = id ? `/api/products/${id}` : '/api/products';
     const method = id ? 'PUT' : 'POST';
-
     try {
         const res = await fetch(url, { method, body: formData });
         const data = await res.json();
@@ -449,17 +693,14 @@ async function handleProductSubmit(e) {
             showToast(data.message);
             resetProductForm();
             fetchAdminProducts();
-            fetchProducts(); // Update Home grid too
-        } else {
-            alert(data.message);
-        }
+            fetchProducts();
+        } else { alert(data.message); }
     } catch (err) { alert("Lỗi khi lưu sản phẩm!"); }
 }
 
 function editProduct(id) {
     const p = products.find(prod => prod.id === id);
     if (!p) return;
-    
     document.getElementById('edit-product-id').value = p.id;
     document.getElementById('p-name').value = p.name;
     document.getElementById('p-price').value = p.price;
@@ -467,8 +708,6 @@ function editProduct(id) {
     document.getElementById('admin-form-title').textContent = "Chỉnh sửa sản phẩm";
     document.getElementById('p-submit-btn').textContent = "Cập nhật sản phẩm";
     document.getElementById('p-cancel-btn').style.display = 'inline-block';
-    document.getElementById('p-image-name').textContent = `Ảnh hiện tại: ${p.image.split('/').pop()}`;
-    
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -478,12 +717,10 @@ function resetProductForm() {
     document.getElementById('admin-form-title').textContent = "Thêm sản phẩm mới";
     document.getElementById('p-submit-btn').textContent = "Lưu sản phẩm";
     document.getElementById('p-cancel-btn').style.display = 'none';
-    document.getElementById('p-image-name').textContent = '';
 }
 
 async function deleteProduct(id) {
-    if (!confirm("Bạn có chắc chắn muốn xóa sản phẩm này? Thao tác này sẽ xóa vĩnh viễn cả file ảnh!")) return;
-    
+    if (!confirm("Bạn có chắc chắn muốn xóa sản phẩm này?")) return;
     try {
         const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
         const data = await res.json();
@@ -491,9 +728,7 @@ async function deleteProduct(id) {
             showToast(data.message);
             fetchAdminProducts();
             fetchProducts();
-        } else {
-            alert(data.message);
-        }
+        } else { alert(data.message); }
     } catch (err) { alert("Lỗi khi xóa sản phẩm!"); }
 }
 
@@ -505,79 +740,25 @@ async function fetchOrders() {
 
 function renderAdminOrders(orders) {
     if (!adminOrderList) return;
-    if (orders.length === 0) {
-        adminOrderList.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-muted);">Chưa có đơn hàng nào.</td></tr>';
-        return;
-    }
-
     const statusConfig = {
         'Chờ xử lý': { bg: '#fef3c7', color: '#92400e', icon: 'clock' },
-        'Đang giao':  { bg: '#dbeafe', color: '#1e40af', icon: 'truck' },
-        'Đã giao':    { bg: '#d1fae5', color: '#065f46', icon: 'check-circle' },
-        'Đã hủy':     { bg: '#fee2e2', color: '#991b1b', icon: 'x-circle' }
+        'Đang giao': { bg: '#dbeafe', color: '#1e40af', icon: 'truck' },
+        'Đã giao': { bg: '#d1fae5', color: '#065f46', icon: 'check-circle' },
+        'Đã hủy': { bg: '#fee2e2', color: '#991b1b', icon: 'x-circle' }
     };
-
     adminOrderList.innerHTML = orders.map(o => {
         const st = statusConfig[o.status] || statusConfig['Chờ xử lý'];
-        const itemNames = o.items.map(i => `${i.name} x${i.quantity}`).join('\n');
-
-        // Build action buttons based on current status
-        let actionBtns = '';
-        if (o.status === 'Chờ xử lý') {
-            actionBtns = `
-                <button class="action-btn order-confirm-btn" onclick="updateOrderStatus(${o.id}, 'Đang giao')" title="Xác nhận & giao hàng">
-                    <i data-lucide="truck" size="13"></i> Xác nhận
-                </button>
-                <button class="action-btn order-cancel-btn" onclick="updateOrderStatus(${o.id}, 'Đã hủy')" title="Hủy đơn hàng">
-                    <i data-lucide="x-circle" size="13"></i> Hủy
-                </button>`;
-        } else if (o.status === 'Đang giao') {
-            actionBtns = `
-                <button class="action-btn order-done-btn" onclick="updateOrderStatus(${o.id}, 'Đã giao')" title="Đánh dấu đã giao">
-                    <i data-lucide="check-circle" size="13"></i> Đã giao
-                </button>
-                <button class="action-btn order-cancel-btn" onclick="updateOrderStatus(${o.id}, 'Đã hủy')" title="Hủy đơn hàng">
-                    <i data-lucide="x-circle" size="13"></i> Hủy
-                </button>`;
-        } else if (o.status === 'Đã hủy' || o.status === 'Đã giao') {
-            actionBtns = `
-                <button class="action-btn order-pending-btn" onclick="updateOrderStatus(${o.id}, 'Chờ xử lý')" title="Khôi phục về Chờ xử lý">
-                    <i data-lucide="rotate-ccw" size="13"></i> Khôi phục
-                </button>`;
-        }
-
         return `
-        <tr class="order-row" data-order-id="${o.id}">
-            <td>
-                <div style="font-size: 0.75rem; font-family: monospace; color: var(--text-muted);">#${o.id}</div>
-            </td>
-            <td>
-                <div style="font-weight: 600; font-size: 0.9rem;">${o.customer?.name || '—'}</div>
-                <div style="font-size: 0.78rem; color: var(--text-muted);">${o.customer?.phone || ''}</div>
-                <div style="font-size: 0.72rem; color: var(--text-muted); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${o.customer?.address}, ${o.customer?.province}">${o.customer?.address}, ${o.customer?.province}</div>
-            </td>
-            <td>
-                <div style="font-size: 0.85rem; font-weight: 600;">${o.items.length} sản phẩm</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;" title="${itemNames}" onclick="showOrderDetail(${o.id})">Xem chi tiết ▾</div>
-            </td>
-            <td>
-                <div style="font-weight: 700; color: var(--accent-color); white-space: nowrap;">${o.total.toLocaleString()}đ</div>
-                <div style="font-size: 0.75rem; color: var(--text-muted);">${(o.payment?.method || '').toUpperCase()}</div>
-            </td>
-            <td>
-                <div style="font-size: 0.8rem; white-space: nowrap;">${o.time}</div>
-            </td>
-            <td>
-                <span class="order-status-badge" style="background: ${st.bg}; color: ${st.color};">
-                    <i data-lucide="${st.icon}" size="12"></i> ${o.status}
-                </span>
-            </td>
-            <td>
-                <div class="order-action-group">
-                    ${actionBtns}
-                    <button class="action-btn order-delete-btn" onclick="deleteOrder(${o.id})" title="Xóa vĩnh viễn đơn hàng">
-                        <i data-lucide="trash-2" size="13"></i> Xóa
-                    </button>
+        <tr data-order-id="${o.id}">
+            <td style="padding:1rem;">#${o.id}</td>
+            <td style="padding:1rem;">${o.customer?.name}<br><small>${o.customer?.phone}</small></td>
+            <td style="padding:1rem;">${o.total.toLocaleString()}đ</td>
+            <td style="padding:1rem;"><span style="background:${st.bg}; color:${st.color}; padding:4px 12px; border-radius:20px; font-size:0.8rem; font-weight:700;">${o.status}</span></td>
+            <td style="padding:1rem;">
+                <div style="display:flex; gap:0.5rem;">
+                    <button class="action-btn" onclick="updateOrderStatus(${o.id}, 'Đang giao')">Giao</button>
+                    <button class="action-btn" onclick="updateOrderStatus(${o.id}, 'Đã giao')">Xong</button>
+                    <button class="action-btn delete-btn" onclick="deleteOrder(${o.id})">Xóa</button>
                 </div>
             </td>
         </tr>`;
@@ -585,57 +766,20 @@ function renderAdminOrders(orders) {
     lucide.createIcons();
 }
 
-window.showOrderDetail = function(orderId) {
-    // fetch fresh orders from current rendered list
-    const row = adminOrderList.querySelector(`[data-order-id="${orderId}"]`);
-    if (!row) return;
-    const titleEl = row.querySelector('td:nth-child(2) div');
-    alert(`Chi tiết đơn hàng #${orderId}\n` + row.querySelector('[title]').getAttribute('title'));
+window.updateOrderStatus = async function (orderId, newStatus) {
+    await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+    });
+    fetchOrders();
 };
 
-window.updateOrderStatus = async function(orderId, newStatus) {
-    const confirmMsg = {
-        'Đang giao': `Xác nhận giao đơn hàng #${orderId}?`,
-        'Đã giao':   `Đánh dấu đơn hàng #${orderId} đã giao xong?`,
-        'Đã hủy':    `Bạn chắc chắn muốn HỦY đơn hàng #${orderId}?`,
-        'Chờ xử lý': `Khôi phục đơn hàng #${orderId} về "Chờ xử lý"?`
-    };
-    if (!confirm(confirmMsg[newStatus] || 'Xác nhận thao tác?')) return;
-
-    try {
-        const res = await fetch(`/api/orders/${orderId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus })
-        });
-        const data = await res.json();
-        if (data.status === 'success') {
-            showToast(data.message, 'success');
-            fetchOrders();
-        } else {
-            showToast(data.message, 'error');
-        }
-    } catch (err) {
-        showToast('Lỗi kết nối server!', 'error');
-    }
+window.deleteOrder = async function (orderId) {
+    if (!confirm("Xóa đơn hàng này?")) return;
+    await fetch(`/api/orders/${orderId}`, { method: 'DELETE' });
+    fetchOrders();
 };
-
-window.deleteOrder = async function(orderId) {
-    if (!confirm(`XÓA VĨNH VIỄN đơn hàng #${orderId}?\nThao tác này không thể hoàn tác!`)) return;
-    try {
-        const res = await fetch(`/api/orders/${orderId}`, { method: 'DELETE' });
-        const data = await res.json();
-        if (data.status === 'success') {
-            showToast(data.message, 'success');
-            fetchOrders();
-        } else {
-            showToast(data.message, 'error');
-        }
-    } catch (err) {
-        showToast('Lỗi kết nối server!', 'error');
-    }
-};
-
 
 // --- User Order Tracking ---
 async function fetchMyOrders() {
@@ -644,73 +788,111 @@ async function fetchMyOrders() {
         const res = await fetch(`/api/my-orders?email=${encodeURIComponent(currentUser.email)}`);
         const data = await res.json();
         renderMyOrders(data);
-    } catch (err) {
-        myOrdersList.innerHTML = '<p style="text-align: center; padding: 3rem; color: red;">Lỗi khi tải đơn hàng.</p>';
-    }
+    } catch (err) { console.error("Lỗi đơn hàng"); }
 }
 
 function renderMyOrders(orders) {
     if (!myOrdersList) return;
     if (orders.length === 0) {
-        myOrdersList.innerHTML = `
-            <div style="text-align: center; padding: 4rem 2rem;">
-                <i data-lucide="package-open" style="color: var(--text-muted); margin-bottom: 1rem;" size="64"></i>
-                <h3 style="color: var(--text-muted); margin-bottom: 0.5rem;">Chưa có đơn hàng nào</h3>
-                <p style="color: var(--text-muted); font-size: 0.9rem;">Hãy bắt đầu mua sắm để theo dõi đơn hàng tại đây!</p>
-            </div>
-        `;
-        lucide.createIcons();
+        myOrdersList.innerHTML = '<p style="text-align:center; padding:3rem; color:var(--text-muted);">Bạn chưa có đơn hàng nào.</p>';
         return;
     }
-    
     const statusColors = {
         'Chờ xử lý': { bg: '#fef3c7', color: '#92400e', icon: 'clock' },
         'Đang giao': { bg: '#dbeafe', color: '#1e40af', icon: 'truck' },
         'Đã giao': { bg: '#d1fae5', color: '#065f46', icon: 'check-circle' },
-        'Đã hủy': { bg: '#fee2e2', color: '#991b1b', icon: 'x-circle' }
+        'Đã hủy': { bg: '#fee2e2', color: '#991b1b', icon: 'x-circle' },
+        'Đã nhận': { bg: '#dcfce7', color: '#166534', icon: 'package-check' },
+        'Trả hàng': { bg: '#ffedd5', color: '#9a3412', icon: 'refresh-ccw' }
     };
-    
+
     myOrdersList.innerHTML = orders.map(o => {
         const st = statusColors[o.status] || statusColors['Chờ xử lý'];
         const itemsHtml = o.items.map(item => `
-            <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color);">
-                <img src="static/${item.image}" style="width: 45px; height: 45px; object-fit: cover; border-radius: 6px;">
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem 0; border-bottom: 1px dashed var(--border-color);">
+                <img src="static/${item.image}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 8px;">
                 <div style="flex: 1;">
-                    <div style="font-size: 0.85rem; font-weight: 500;">${item.name}</div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted);">x${item.quantity}</div>
+                    <div style="font-weight: 600;">${item.name}</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">Số lượng: ${item.quantity}</div>
+                    ${o.status === 'Đã giao' ? `
+                        <button class="order-review-btn" onclick="openReviewModal(${o.id}, ${item.id}, '${item.name}', '${item.image}')">
+                            <i data-lucide="star" size="14"></i> Đánh giá ngay
+                        </button>
+                    ` : ''}
                 </div>
-                <div style="font-size: 0.85rem; font-weight: 600; color: var(--accent-color);">${item.price.toLocaleString()}đ</div>
+                <div style="font-weight: 700; color: var(--accent-color);">${item.price.toLocaleString()}đ</div>
             </div>
         `).join('');
-        
+
         return `
-        <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1.5rem; margin-bottom: 1.5rem;">
+        <div style="background: var(--card-bg); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: var(--shadow-sm);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);">
                 <div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">Mã ĐH: #${o.id}</div>
-                    <div style="font-size: 0.8rem; color: var(--text-muted);">${o.time}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">Mã đơn: #${o.id}</div>
+                    <div style="font-size: 0.85rem; font-weight: 600;">${o.time}</div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 0.5rem; background: ${st.bg}; color: ${st.color}; padding: 0.35rem 0.85rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600;">
-                    <i data-lucide="${st.icon}" size="14"></i>
-                    ${o.status}
+                <div style="display: flex; align-items: center; gap: 0.5rem; background: ${st.bg}; color: ${st.color}; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 700;">
+                    <i data-lucide="${st.icon}" size="14"></i> ${o.status}
                 </div>
             </div>
             ${itemsHtml}
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
-                <div style="font-size: 0.85rem; color: var(--text-muted);">
-                    <i data-lucide="map-pin" size="14" style="vertical-align: middle;"></i>
-                    ${o.customer.address}, ${o.customer.province}
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+                <div style="font-size: 0.9rem; color: var(--text-muted);">
+                    <i data-lucide="map-pin" size="16"></i> ${o.customer.address}, ${o.customer.province}
                 </div>
-                <div>
-                    <span style="font-size: 0.85rem; color: var(--text-muted);">Tổng: </span>
-                    <span style="font-size: 1.1rem; font-weight: 700; color: var(--accent-color);">${o.total.toLocaleString()}đ</span>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.85rem;">Tổng cộng</div>
+                    <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent-color);">${o.total.toLocaleString()}đ</div>
                 </div>
             </div>
+            ${o.status === 'Đã giao' ? `
+                <div class="order-actions">
+                    <button class="btn-confirm" onclick="confirmReceived(${o.id})">
+                        <i data-lucide="check-circle" size="18"></i> Xác nhận đã nhận
+                    </button>
+                    <button class="btn-refund" onclick="requestRefund(${o.id})">
+                        <i data-lucide="refresh-ccw" size="18"></i> Trả hàng hoàn tiền
+                    </button>
+                </div>
+            ` : ''}
         </div>
         `;
     }).join('');
     lucide.createIcons();
 }
+
+window.confirmReceived = async (orderId) => {
+    if (!confirm("Bạn xác nhận đã nhận được đầy đủ hàng và hài lòng với sản phẩm?")) return;
+    try {
+        const res = await fetch(`/api/orders/${orderId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Đã nhận' })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast("Tuyệt vời! Chúc bạn có trải nghiệm tốt với sản phẩm.");
+            fetchMyOrders();
+        }
+    } catch (err) { showToast("Lỗi khi xác nhận", "error"); }
+};
+
+window.requestRefund = async (orderId) => {
+    const reason = prompt("Vui lòng nhập lý do trả hàng:");
+    if (!reason) return;
+    try {
+        const res = await fetch(`/api/orders/${orderId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Trả hàng' })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast("Yêu cầu trả hàng đã được gửi. Chúng tôi sẽ liên hệ bạn sớm.");
+            fetchMyOrders();
+        }
+    } catch (err) { showToast("Lỗi khi gửi yêu cầu", "error"); }
+};
 
 // --- Theme Management ---
 function initTheme() {
@@ -736,30 +918,27 @@ themeToggle.addEventListener('click', () => {
 async function fetchProducts() {
     try {
         const response = await fetch('/products');
-        if (!response.ok) throw new Error('Không thể tải sản phẩm');
         products = await response.json();
         renderProducts(products);
-    } catch (error) {
-        productList.innerHTML = `<p style="grid-column: 1/-1; text-align: center; padding: 3rem; color: red;">Lỗi kết nối API: ${error.message}</p>`;
-    }
+    } catch (error) { console.error("Lỗi API sản phẩm"); }
 }
 
 function renderProducts(items) {
     productList.innerHTML = '';
     if (items.length === 0) {
-        productList.innerHTML = '<p style="grid-column: 1/-1; text-align: center; padding: 3rem;">Không tìm thấy sản phẩm nào.</p>';
+        productList.innerHTML = '<p style="grid-column:1/-1; text-align:center; padding:3rem;">Không có sản phẩm nào.</p>';
         return;
     }
     items.forEach(product => {
         const card = document.createElement('div');
         card.className = 'product-card';
         card.innerHTML = `
-            <div class="product-img-wrapper">
+            <div class="product-img-wrapper" onclick="showProductDetail(${product.id})">
                 <img src="static/${product.image}" alt="${product.name}" class="product-img">
             </div>
             <div class="product-info">
                 <span class="product-category">${product.category}</span>
-                <h3 class="product-title">${product.name}</h3>
+                <h3 class="product-title" onclick="showProductDetail(${product.id})" style="cursor: pointer;">${product.name}</h3>
                 <p class="product-price">${formatPrice(product.price)}</p>
                 <button class="add-to-cart" onclick="addToCart(${product.id})">Thêm vào giỏ</button>
             </div>
@@ -776,7 +955,7 @@ window.addToCart = (productId) => {
     else cart.push({ ...product, quantity: 1 });
     saveCart();
     updateCartUI();
-    showToast(`Đã thêm ${product.name} vào giỏ hàng!`);
+    showToast(`Đã thêm ${product.name} vào giỏ!`);
 };
 
 window.removeFromCart = (productId) => {
@@ -799,137 +978,117 @@ function saveCart() { localStorage.setItem('cart', JSON.stringify(cart)); }
 function updateCartUI() {
     const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
     cartCount.textContent = totalItems;
-    cartCount.style.display = totalItems > 0 ? 'flex' : 'none';
 
-    if (cartItemsList) {
-        if (cart.length === 0) {
-            cartItemsList.innerHTML = '<p style="text-align: center; padding: 2rem;">Giỏ hàng của bạn đang trống.</p>';
-            subtotalEl.textContent = '0đ';
-            shippingFeeEl.textContent = '0đ';
-            totalPriceEl.textContent = '0đ';
-        } else {
-            cartItemsList.innerHTML = '';
-            let subtotal = 0;
-            cart.forEach(item => {
-                subtotal += item.price * item.quantity;
-                const itemDiv = document.createElement('div');
-                itemDiv.style.display = 'flex';
-                itemDiv.style.gap = '1rem';
-                itemDiv.style.marginBottom = '1.5rem';
-                itemDiv.style.paddingBottom = '1rem';
-                itemDiv.style.borderBottom = '1px solid var(--border-color)';
-                itemDiv.innerHTML = `
-                    <img src="static/${item.image}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px;">
-                    <div style="flex: 1;">
-                        <h4 style="font-size: 0.95rem; margin-bottom: 0.25rem;">${item.name}</h4>
-                        <p style="color: var(--accent-color); font-weight: 600;">${formatPrice(item.price)}</p>
-                        <div style="display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem;">
-                            <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-color); padding: 2px 8px; border-radius: 20px;">
-                                <button onclick="updateQuantity(${item.id}, -1)" style="border:none; background:none; cursor:pointer; font-size: 1.2rem;">-</button>
-                                <span>${item.quantity}</span>
-                                <button onclick="updateQuantity(${item.id}, 1)" style="border:none; background:none; cursor:pointer; font-size: 1.2rem;">+</button>
-                            </div>
-                            <button onclick="removeFromCart(${item.id})" style="border:none; background:none; color: var(--text-muted); cursor:pointer; font-size: 0.8rem;">Xóa</button>
-                        </div>
-                    </div>
-                `;
-                cartItemsList.appendChild(itemDiv);
-            });
-            subtotalEl.textContent = formatPrice(subtotal);
-            shippingFeeEl.textContent = formatPrice(selectedShippingFee);
-            totalPriceEl.textContent = formatPrice(subtotal + selectedShippingFee);
-        }
-    }
-}
-
-// --- Checkout Logic ---
-async function handleCheckout() {
-    if (cart.length === 0) return showToast("Giỏ hàng của bạn đang trống!", "error");
-    if (!currentUser) {
-        alert("Vui lòng đăng nhập để tiếp tục thanh toán!");
-        authModal.style.display = 'flex';
-        showAuthForm('login');
+    if (!cartItemsList) return;
+    if (cart.length === 0) {
+        cartItemsList.innerHTML = '<p>Giỏ hàng đang trống.</p>';
+        subtotalEl.textContent = '0đ';
+        shippingFeeEl.textContent = '0đ';
+        totalPriceEl.textContent = '0đ';
         return;
     }
 
-    const name = document.getElementById('cust-name').value.trim();
-    const phone = document.getElementById('cust-phone').value.trim();
-    const province = provinceSelect.value;
-    const address = document.getElementById('cust-address').value.trim();
+    cartItemsList.innerHTML = cart.map(item => `
+        <div class="cart-item">
+            <img src="static/${item.image}" alt="${item.name}">
+            <div class="cart-item-info">
+                <h4>${item.name}</h4>
+                <p>${formatPrice(item.price)}</p>
+                <div class="quantity-controls">
+                    <button onclick="updateQuantity(${item.id}, -1)"><i data-lucide="minus" size="14"></i></button>
+                    <span>${item.quantity}</span>
+                    <button onclick="updateQuantity(${item.id}, 1)"><i data-lucide="plus" size="14"></i></button>
+                </div>
+            </div>
+            <button class="remove-item" onclick="removeFromCart(${item.id})" title="Xóa khỏi giỏ hàng">
+                <i data-lucide="trash-2" size="20"></i>
+            </button>
+        </div>
+    `).join('');
 
-    if (!name || !phone || !province || !address) return alert("Vui lòng nhập đủ thông tin nhận hàng!");
-    if (!selectedPaymentMethod) return alert("Vui lòng chọn phương thức thanh toán!");
+    const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    subtotalEl.textContent = formatPrice(subtotal);
+    shippingFeeEl.textContent = formatPrice(selectedShippingFee);
+    totalPriceEl.textContent = formatPrice(subtotal + selectedShippingFee);
 
-    const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const total = subtotal + selectedShippingFee;
-    const deliveryTime = deliveryTimeEl.textContent.replace('Dự kiến giao hàng: ', '');
-    
-    try {
-        const response = await fetch('/checkout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                user: currentUser,
-                customer: { name, phone, province, address },
-                items: cart,
-                subtotal: subtotal,
-                shippingFee: selectedShippingFee,
-                total: total,
-                deliveryTime: deliveryTime,
-                payment: { method: selectedPaymentMethod, type: selectedPaymentMethod === 'bank' ? selectedPaymentType : 'full' }
-            })
-        });
-        const result = await response.json();
-        if (result.status === 'success') {
-            cart = [];
-            saveCart();
-            updateCartUI();
-            alert(result.message);
-            showSection('home');
-        }
-    } catch (err) { alert('Có lỗi xảy ra khi gửi đơn hàng.'); }
+    lucide.createIcons();
 }
 
-// --- Navigation ---
-function showSection(section) {
-    [homeSection, cartSection, adminSection, ordersSection].forEach(s => { if(s) s.style.display = 'none'; });
-    
-    if (section === 'cart') {
-        cartSection.style.display = 'block';
-        updateCartUI();
-    } else if (section === 'admin') {
-        adminSection.style.display = 'block';
-        fetchAdminProducts();
-        fetchOrders();
-    } else if (section === 'orders') {
-        ordersSection.style.display = 'block';
-        fetchMyOrders();
-    } else {
-        homeSection.style.display = 'block';
-    }
+function formatPrice(price) { return price.toLocaleString() + 'đ'; }
+
+function showSection(sectionId) {
+    [homeSection, cartSection, adminSection, ordersSection].forEach(s => s.style.display = 'none');
+    document.getElementById(`${sectionId}-section`).style.display = 'block';
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (sectionId === 'admin') switchAdminTab('products');
+    if (sectionId === 'orders') fetchMyOrders();
 }
 
 cartBtn.addEventListener('click', () => showSection('cart'));
 backToHome.addEventListener('click', () => showSection('home'));
-logoBtn.addEventListener('click', (e) => { e.preventDefault(); showSection('home'); });
+logoBtn.addEventListener('click', () => showSection('home'));
 ordersBtn.addEventListener('click', () => showSection('orders'));
 
-searchInput.addEventListener('input', (e) => {
-    const query = e.target.value.toLowerCase();
-    const filtered = products.filter(p => p.name.toLowerCase().includes(query) || p.category.toLowerCase().includes(query));
-    renderProducts(filtered);
-});
-
-function formatPrice(price) { return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(price); }
-
-function showToast(message, type = "success") {
+// --- Toast Helper ---
+function showToast(message, type = 'success') {
     const toast = document.createElement('div');
-    toast.className = 'toast';
-    const icon = type === "success" ? "check-circle" : "alert-circle";
-    const color = type === "success" ? "#10b981" : "#ef4444";
-    toast.innerHTML = `<i data-lucide="${icon}" style="color: ${color};"></i><span>${message}</span>`;
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        <i data-lucide="${type === 'success' ? 'check-circle' : 'alert-circle'}"></i>
+        <span>${message}</span>
+    `;
     toastContainer.appendChild(toast);
     lucide.createIcons();
-    setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; setTimeout(() => toast.remove(), 300); }, 3000);
+    setTimeout(() => {
+        toast.style.animation = 'slideIn 0.3s ease-out reverse';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
+
+async function handleCheckout() {
+    if (cart.length === 0) return alert("Giỏ hàng đang trống!");
+    if (!selectedPaymentMethod) return alert("Vui lòng chọn phương thức thanh toán!");
+
+    const name = document.getElementById('cust-name').value.trim();
+    const phone = document.getElementById('cust-phone').value.trim();
+    const address = document.getElementById('cust-address').value.trim();
+    const province = provinceSelect.value;
+
+    if (!name || !phone || !address || !province) return alert("Vui lòng điền đủ thông tin!");
+
+    const orderData = {
+        customer: { name, phone, address, province, email: currentUser ? currentUser.email : null },
+        items: cart,
+        subtotal: cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
+        shipping_fee: selectedShippingFee,
+        total: cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + selectedShippingFee,
+        payment: { method: selectedPaymentMethod, type: selectedPaymentType }
+    };
+
+    try {
+        const res = await fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(orderData)
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast("Đặt hàng thành công!");
+            cart = [];
+            saveCart();
+            updateCartUI();
+            showSection('home');
+        } else { alert(data.message); }
+    } catch (err) { alert("Lỗi đặt hàng!"); }
+}
+
+// Basic Search
+searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase();
+    const filtered = products.filter(p =>
+        p.name.toLowerCase().includes(query) ||
+        p.category.toLowerCase().includes(query)
+    );
+    renderProducts(filtered);
+});
